@@ -1,0 +1,8 @@
+.env
+test.py
+test/
+e_data.json
+n_data.json
+medicine_index/
+PaddleOCR/
+__pycache__/
