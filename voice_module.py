@@ -103,9 +103,25 @@ class VoiceModule:
             pygame.mixer.music.load(temp_file)
             pygame.mixer.music.play()
             
-            # 재생 완료 대기
+            # 재생 완료 대기 (스킵 기능 포함)
+            print("🎵 음성 재생 중... (S키를 누르면 스킵)")
             while pygame.mixer.music.get_busy():
                 time.sleep(0.1)
+                # Windows에서 키 입력 체크 (non-blocking)
+                try:
+                    import msvcrt
+                    if msvcrt.kbhit():
+                        key = msvcrt.getch().decode('utf-8', errors='ignore').upper()
+                        if key == 'S':
+                            print("\n⏭️ 음성을 스킵했습니다.")
+                            pygame.mixer.music.stop()
+                            break
+                except ImportError:
+                    # Windows가 아닌 경우는 스킵 기능 없이 진행
+                    pass
+                except:
+                    # 기타 예외 발생 시 무시하고 계속
+                    pass
             
             # 리소스 해제
             pygame.mixer.music.unload()

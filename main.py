@@ -5,30 +5,41 @@ OCR + RAG + 음성 인터페이스를 통합한 메인 프로그램
 
 import os
 import time
+import pandas as pd
 from ocr_module import OCRModule
 from voice_module import VoiceModule
 from llm_module import LLMModule
+from store import StoreModule
 
 class MedicineAssistant:
     def __init__(self):
-        """시스템 초기화"""
+        """시스템 초기화 (모든 것을 미리 로드)"""
         print("="*60)
         print("🏥 의약품 정보 음성 대화 시스템")
         print("="*60)
         print()
         
-        # 모듈 초기화
         print("시스템을 초기화하는 중입니다...")
+        print("🚀 빠른 사용자 경험을 위해 모든 모듈을 미리 준비합니다...")
         print("-"*60)
         
         try:
+            # 모든 모듈 미리 로드
+            print("🎤 음성 모듈 로드 중...")
             self.voice = VoiceModule()
-            self.ocr = OCRModule()
-            self.llm = LLMModule()
+            print("✅ 음성 모듈 완료")
             
-            print("-"*60)
-            print("✅ 모든 모듈이 준비되었습니다!")
-            print()
+            print("📷 OCR 모듈 로드 중...")
+            self.ocr = OCRModule()
+            print("✅ OCR 모듈 완료")
+            
+            print("🤖 LLM 모듈 로드 중...")
+            self.llm = LLMModule()
+            print("✅ LLM 모듈 완료")
+            
+            print("💾 저장 모듈 로드 중...")
+            self.store = StoreModule(self.voice, self.ocr, self.llm)
+            print("✅ 저장 모듈 완료")
             
         except Exception as e:
             print(f"❌ 초기화 실패: {e}")
@@ -40,6 +51,241 @@ class MedicineAssistant:
         
         # 상태 변수
         self.ocr_context = None
+        
+        # 의약품 이미지 경로
+        self.med_img = "test/med.jpg"
+        
+        # CSV 캐시
+        self.csv_cache = {
+            'general': None,
+            'given': None,
+            'last_modified': {}
+        }
+        
+        # 검색 인덱스 (빠른 매칭을 위해)
+        self.search_index = []
+        
+        # CSV 데이터 및 검색 인덱스 로드
+        try:
+            print("📊 약품 데이터 로드 중...")
+            self.load_csv_data()
+            self.build_search_index()
+            print("✅ 약품 데이터 완료")
+            
+            print("-"*60)
+            print("🎯 모든 준비가 완료되었습니다! 빠른 반응 준비됨!")
+            print()
+        except Exception as e:
+            print(f"⚠️ 약품 데이터 로드 중 오류 발생: {e}")
+            print("시스템은 계속 실행되지만 일부 기능이 제한될 수 있습니다.")
+    
+    def load_csv_data(self):
+        """CSV 파일을 로드하고 메모리에 저장"""
+        csv_files = ['general.csv', 'given.csv']
+        
+        for csv_name in csv_files:
+            try:
+                if os.path.exists(csv_name):
+                    cache_key = csv_name.split('.')[0]  # 'general' or 'given'
+                    self.csv_cache[cache_key] = pd.read_csv(csv_name, encoding='utf-8')
+                    self.csv_cache['last_modified'][cache_key] = os.path.getmtime(csv_name)
+                else:
+                    cache_key = csv_name.split('.')[0]
+                    self.csv_cache[cache_key] = pd.DataFrame()
+                    
+            except Exception as e:
+                print(f"⚠️ {csv_name} 로드 실패: {e}")
+                cache_key = csv_name.split('.')[0]
+                self.csv_cache[cache_key] = pd.DataFrame()
+    
+    def build_search_index(self):
+        """빠른 검색을 위한 인덱스 구축"""
+        self.search_index = []
+        
+        # general.csv 인덱싱
+        general_df = self.csv_cache.get('general')
+        if general_df is not None and not general_df.empty:
+            for idx, row in general_df.iterrows():
+                if '약품명' in row and pd.notna(row['약품명']):
+                    medicine_name = str(row['약품명'])
+                    self.search_index.append({
+                        'name': medicine_name,
+                        'normalized': medicine_name.lower().replace(" ", "").replace("-", ""),
+                        'keywords': medicine_name.lower().split(),
+                        'row': idx + 2,
+                        'source': 'general'
+                    })
+        
+        # given.csv 인덱싱
+        given_df = self.csv_cache.get('given')
+        if given_df is not None and not given_df.empty:
+            for idx, row in given_df.iterrows():
+                if '제목' in row and pd.notna(row['제목']):
+                    medicine_name = str(row['제목'])
+                    self.search_index.append({
+                        'name': medicine_name,
+                        'normalized': medicine_name.lower().replace(" ", "").replace("-", ""),
+                        'keywords': medicine_name.lower().split(),
+                        'row': idx + 2,
+                        'source': 'given'
+                    })
+        
+        print(f"📚 검색 인덱스 구축 완료: {len(self.search_index)}개 약품")
+    
+    def fast_search_medicine(self, user_input):
+        """미리 구축된 인덱스를 사용한 고속 약품 검색"""
+        if not self.search_index:
+            return None, []
+        
+        user_normalized = user_input.lower().replace(" ", "").replace("-", "")
+        user_keywords = user_input.lower().split()
+        
+        exact_matches = []
+        partial_matches = []
+        keyword_matches = []
+        
+        for item in self.search_index:
+            # 정확한 매치 (정규화된 문자열)
+            if (user_normalized in item['normalized'] or 
+                item['normalized'] in user_normalized):
+                if len(user_normalized) > 2:
+                    exact_matches.append(item)
+                    continue
+            
+            # 키워드 매치
+            keyword_score = 0
+            for user_word in user_keywords:
+                if len(user_word) > 1:
+                    for med_word in item['keywords']:
+                        if user_word in med_word or med_word in user_word:
+                            keyword_score += 1
+                            break
+            
+            if keyword_score > 0:
+                item_with_score = item.copy()
+                item_with_score['score'] = keyword_score
+                keyword_matches.append(item_with_score)
+        
+        # 정확한 매치가 있으면 첫 번째 반환
+        if exact_matches:
+            return exact_matches[0], []
+        
+        # 키워드 점수로 정렬
+        keyword_matches.sort(key=lambda x: x['score'], reverse=True)
+        
+        # 최고 점수가 여러 개면 부분 매치로, 하나면 정확한 매치로 처리
+        if keyword_matches:
+            best_score = keyword_matches[0]['score']
+            best_matches = [m for m in keyword_matches if m['score'] == best_score]
+            
+            if len(best_matches) == 1:
+                return best_matches[0], []
+            else:
+                return None, best_matches[:5]  # 최대 5개까지
+        
+        return None, []
+    
+    def extract_medicine_from_sentence(self, user_input):
+        """GPT를 사용한 자연어에서 약품명 추출"""
+        
+        # 저장된 약품 목록을 간단하게 정리
+        medicine_list = [item['name'] for item in self.search_index]
+        
+        # 약품이 너무 많으면 상위 몇 개만 GPT에 보내기 (토큰 절약)
+        if len(medicine_list) > 20:
+            # 일단 간단한 키워드 매칭으로 후보를 줄임
+            user_lower = user_input.lower()
+            potential_medicines = []
+            
+            for item in self.search_index:
+                medicine_name = item['name'].lower()
+                words = medicine_name.split()
+                
+                # 사용자 입력과 겹치는 단어가 있는지 확인
+                for word in words:
+                    if len(word) > 2 and word in user_lower:
+                        potential_medicines.append(item)
+                        break
+                
+                # 사용자 입력의 단어가 약품명에 있는지 확인  
+                user_words = user_lower.split()
+                for user_word in user_words:
+                    if len(user_word) > 2 and user_word in medicine_name:
+                        if item not in potential_medicines:
+                            potential_medicines.append(item)
+                        break
+            
+            if potential_medicines:
+                medicine_list = [item['name'] for item in potential_medicines[:15]]
+            else:
+                medicine_list = medicine_list[:15]  # 아무 매치도 없으면 처음 15개
+        
+        # GPT로 약품명 추출
+        extract_prompt = f"""사용자가 말한 내용: "{user_input}"
+
+사용 가능한 약품 목록:
+{chr(10).join(f'- {med}' for med in medicine_list)}
+
+사용자가 말한 내용을 분석해서 어떤 약품을 원하는지 파악해주세요.
+
+예시:
+- "타이레놀인가 그거 꺼내줘" → 타이레놀 8시간 이알서방정 650 mg
+- "두통약 좀 가져다줘" → (두통에 효과있는 약품명)  
+- "그 진통제 있잖아" → (진통제 약품명)
+- "감기약 좀" → (감기약 약품명)
+
+위 약품 목록에서 사용자가 원하는 약품의 정확한 이름을 하나만 출력하세요.
+일치하는 약품이 없으면 "없음"이라고 답하세요.
+약품명만 출력하고 다른 설명은 하지 마세요."""
+
+        try:
+            extracted_name = self.llm.query(extract_prompt, None).strip()
+            
+            if extracted_name == "없음" or not extracted_name:
+                return None, []
+            
+            # 추출된 약품명을 인덱스에서 찾기
+            for item in self.search_index:
+                if (extracted_name.lower() in item['name'].lower() or 
+                    item['name'].lower() in extracted_name.lower()):
+                    return item, []
+            
+            # 정확한 매치가 없으면 부분 매치 찾기
+            partial_matches = []
+            extracted_words = extracted_name.lower().split()
+            
+            for item in self.search_index:
+                item_words = item['name'].lower().split()
+                match_score = 0
+                
+                for ext_word in extracted_words:
+                    if len(ext_word) > 2:
+                        for item_word in item_words:
+                            if ext_word in item_word or item_word in ext_word:
+                                match_score += 1
+                                break
+                
+                if match_score > 0:
+                    partial_matches.append({
+                        'item': item,
+                        'score': match_score
+                    })
+            
+            if partial_matches:
+                # 점수가 가장 높은 것들만 반환
+                partial_matches.sort(key=lambda x: x['score'], reverse=True)
+                best_score = partial_matches[0]['score']
+                best_matches = [m['item'] for m in partial_matches if m['score'] == best_score]
+                
+                if len(best_matches) == 1:
+                    return best_matches[0], []
+                else:
+                    return None, best_matches[:3]
+            
+        except Exception as e:
+            print(f"⚠️ GPT 추출 오류: {e}")
+        
+        return None, []
     
     def show_menu(self):
         """메뉴 표시"""
@@ -51,9 +297,23 @@ class MedicineAssistant:
         print("="*60)
     
     def handle_medicine_storage(self):
-        """약품 저장 처리 (구현 예정)"""
-        print("\n🚧 구현 중...")
-        self.voice.speak("약품 저장 기능은 현재 구현 중입니다.")
+        """약품 저장 처리"""
+        print("\n💾 약품 저장 프로세스를 시작합니다...")
+        try:
+            result = self.store.start_storage_process(self.med_img)
+            if result:
+                success_msg = "약품 저장이 완료되었습니다."
+                print(f"\n✅ {success_msg}")
+                self.voice.speak(success_msg)
+            else:
+                fail_msg = "약품 저장이 취소되었습니다."
+                print(f"\n❌ {fail_msg}")
+                self.voice.speak(fail_msg)
+        except Exception as e:
+            error_msg = f"저장 중 오류가 발생했습니다: {e}"
+            print(f"\n❌ {error_msg}")
+            self.voice.speak("저장 중 오류가 발생했습니다.")
+        
         time.sleep(1)
     
     def handle_medicine_query(self):
@@ -68,10 +328,9 @@ class MedicineAssistant:
         
         if user_input == 'S':
             # OCR 처리 시도
-            image_path = "test/tylenol2.jpg"
-            if os.path.exists(image_path):
-                print(f"\n📸 이미지 파일 발견: {image_path}")
-                ocr_text, _ = self.ocr.extract_text_with_preprocessing(image_path)
+            if os.path.exists(self.med_img):
+                print(f"\n📸 이미지 파일 발견: {self.med_img}")
+                ocr_text, _ = self.ocr.extract_text_with_preprocessing(self.med_img)
                 
                 if ocr_text:
                     self.ocr_context = self.ocr.format_for_llm(ocr_text)
@@ -80,7 +339,7 @@ class MedicineAssistant:
                     print("⚠️ 이미지에서 텍스트를 추출할 수 없었습니다.")
                     self.ocr_context = None
             else:
-                print(f"⚠️ {image_path} 파일이 없습니다. OCR을 건너뜁니다.")
+                print(f"⚠️ {self.med_img} 파일이 없습니다. OCR을 건너뜁니다.")
                 self.ocr_context = None
         
         # 질문 받기
@@ -117,10 +376,173 @@ class MedicineAssistant:
         # OCR 컨텍스트 초기화
         self.ocr_context = None
     
+    def handle_medicine_view(self):
+        """저장된 약품 조회 처리"""
+        print("\n📋 저장된 약품을 조회합니다...")
+        
+        try:
+            if not self.search_index:
+                error_msg = "저장된 약품이 없습니다."
+                print(f"❌ {error_msg}")
+                self.voice.speak(error_msg)
+                return
+            
+            # 일반의약품과 처방약으로 분류
+            general_medicines = []
+            given_medicines = []
+            
+            for item in self.search_index:
+                if item['source'] == 'general':
+                    general_medicines.append(item['name'])
+                elif item['source'] == 'given':
+                    given_medicines.append(item['name'])
+            
+            # 음성 메시지 생성
+            message_parts = []
+            
+            if general_medicines:
+                general_list = ", ".join(general_medicines)
+                general_msg = f"일반의약품에 {general_list}이 있습니다."
+                message_parts.append(general_msg)
+            
+            if given_medicines:
+                given_list = ", ".join(given_medicines)
+                given_msg = f"처방약에 {given_list}이 있습니다."
+                message_parts.append(given_msg)
+            
+            if not message_parts:
+                no_medicine_msg = "저장된 약품이 없습니다."
+                print(f"❌ {no_medicine_msg}")
+                self.voice.speak(no_medicine_msg)
+                return
+            
+            # 화면 출력
+            print("\n" + "="*60)
+            print("📋 저장된 약품 목록")
+            print("-"*60)
+            
+            if general_medicines:
+                print(f"💊 일반의약품 ({len(general_medicines)}개):")
+                for medicine in general_medicines:
+                    print(f"  - {medicine}")
+                print()
+            
+            if given_medicines:
+                print(f"💉 처방약 ({len(given_medicines)}개):")
+                for medicine in given_medicines:
+                    print(f"  - {medicine}")
+                print()
+            
+            print("="*60)
+            
+            # 음성 출력
+            full_message = " ".join(message_parts)
+            print(f"\n🔊 {full_message}")
+            self.voice.speak(full_message)
+            
+        except Exception as e:
+            error_msg = f"조회 중 오류가 발생했습니다: {e}"
+            print(f"❌ {error_msg}")
+            self.voice.speak("조회 중 오류가 발생했습니다.")
+
+    def handle_medicine_retrieve(self):
+        """약품 꺼내기 처리 (초고속 검색)"""
+        print("\n💊 약품 꺼내기 프로세스를 시작합니다...")
+        
+        # 음성으로 약품 이름 입력 받기
+        retrieve_prompt = "어떤 약을 꺼내시겠습니까? 약품 이름을 말씀해주세요."
+        print(f"\n🔊 {retrieve_prompt}")
+        self.voice.speak(retrieve_prompt)
+        
+        # 음성으로 약품명 받기 (10초)
+        print("\n🎤 꺼낼 약품명을 음성으로 말씀해주세요...")
+        user_input = self.voice.listen(duration=10)
+        
+        if not user_input:
+            no_input_msg = "음성을 인식할 수 없었습니다. 다시 시도해주세요."
+            print(f"❌ {no_input_msg}")
+            self.voice.speak(no_input_msg)
+            return
+        
+        print(f"\n🎯 인식된 음성: {user_input}")
+        
+        try:
+            if not self.search_index:
+                error_msg = "저장된 약품이 없습니다."
+                print(f"❌ {error_msg}")
+                self.voice.speak(error_msg)
+                return
+            
+            print("🔍 스마트 검색 중...")
+            
+            # 1단계: 직접적인 약품명 검색 (가장 빠름)
+            exact_match, candidates = self.fast_search_medicine(user_input)
+            
+            if exact_match:
+                success_msg = f"{exact_match['row']}칸에 있는 {exact_match['name']}을 열었습니다"
+                print(f"\n✅ [직접 매치] {success_msg}")
+                self.voice.speak(success_msg)
+                return
+            
+            elif len(candidates) == 1:
+                match = candidates[0]
+                success_msg = f"{match['row']}칸에 있는 {match['name']}을 열었습니다"
+                print(f"\n✅ [키워드 매치] {success_msg}")
+                self.voice.speak(success_msg)
+                return
+            
+            # 2단계: 직접 매치 실패시에만 GPT 자연어 처리
+            print("🧠 자연어 처리 중...")
+            sentence_match, sentence_candidates = self.extract_medicine_from_sentence(user_input)
+            
+            if sentence_match:
+                success_msg = f"{sentence_match['row']}칸에 있는 {sentence_match['name']}을 열었습니다"
+                print(f"\n✅ [GPT 분석] {success_msg}")
+                self.voice.speak(success_msg)
+                return
+            
+            elif len(sentence_candidates) == 1:
+                match = sentence_candidates[0]
+                success_msg = f"{match['row']}칸에 있는 {match['name']}을 열었습니다"
+                print(f"\n✅ [GPT 분석] {success_msg}")
+                self.voice.speak(success_msg)
+                return
+            
+            # 3단계: 여러 후보 중 최종 선택 (마지막 수단)
+            final_candidates = candidates if candidates else sentence_candidates
+            
+            if len(final_candidates) > 1:
+                print(f"🎯 {len(final_candidates)}개 후보에서 최종 선택 중...")
+                
+                candidate_names = [c['name'] for c in final_candidates]
+                extract_prompt = f""""{user_input}" → 후보: {', '.join(candidate_names)}
+가장 적절한 약품명 하나만 출력. 없으면 "없음"."""
+                
+                extracted_name = self.llm.query(extract_prompt, None).strip()
+                
+                if extracted_name != "없음":
+                    for candidate in final_candidates:
+                        if (extracted_name in candidate['name'] or 
+                            candidate['name'] in extracted_name):
+                            success_msg = f"{candidate['row']}칸에 있는 {candidate['name']}을 열었습니다"
+                            print(f"\n✅ [최종 선택] {success_msg}")
+                            self.voice.speak(success_msg)
+                            return
+            
+            # 모든 검색 실패
+            not_found_msg = "요청하신 약품을 찾을 수 없습니다."
+            print(f"❌ {not_found_msg}")
+            self.voice.speak(not_found_msg)
+                
+        except Exception as e:
+            error_msg = f"꺼내기 중 오류가 발생했습니다: {e}"
+            print(f"❌ {error_msg}")
+            self.voice.speak("꺼내기 중 오류가 발생했습니다.")
+    
     def start_voice_interaction(self):
         """음성 상호작용 시작"""
         # 인사말
-        greeting = "어떤 것을 원하십니까? 1번 약품 저장, 2번 약품 질의"
+        greeting = "어떤 것을 원하십니까? 1번 약품 저장, 2번 약품 질의, 3번 약품 꺼내기, 4번 약품 조회"
         print(f"\n🔊 {greeting}")
         self.voice.speak(greeting)
         
@@ -128,13 +550,19 @@ class MedicineAssistant:
         print("\n선택해주세요:")
         print("  1: 약품 저장")
         print("  2: 약품 질의")
+        print("  3: 약품 꺼내기")
+        print("  4: 약품 조회")
         
-        choice = input("\n번호 입력 (1 또는 2): ").strip()
+        choice = input("\n번호 입력 (1, 2, 3 또는 4): ").strip()
         
         if choice == '1':
             self.handle_medicine_storage()
         elif choice == '2':
             self.handle_medicine_query()
+        elif choice == '3':
+            self.handle_medicine_retrieve()
+        elif choice == '4':
+            self.handle_medicine_view()
         else:
             error_msg = "잘못된 선택입니다. 다시 시도해주세요."
             print(f"❌ {error_msg}")
@@ -175,11 +603,13 @@ def check_requirements():
     """필수 요구사항 확인"""
     print("🔍 시스템 요구사항을 확인하는 중...")
     
+    med_img = "test/med.jpg"
+    
     requirements = {
         "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY") is not None,
         "e_data.json": os.path.exists("e_data.json"),
         "n_data.json": os.path.exists("n_data.json"),
-        "test/tylenol2.jpg": os.path.exists("test/tylenol2.jpg")
+        med_img: os.path.exists(med_img)
     }
     
     all_ok = True
@@ -201,8 +631,8 @@ def check_requirements():
             print("2. 의약품 데이터 파일(e_data.json, n_data.json)을 준비하세요")
             print("   (없어도 실행은 가능하지만 RAG 기능이 제한됩니다)")
             
-        if not requirements["test/tylenol2.jpg"]:
-            print("3. OCR 테스트용 이미지 파일(test/tylenol2.jpg)을 준비하세요")
+        if not requirements[med_img]:
+            print(f"3. OCR 테스트용 이미지 파일({med_img})을 준비하세요")
             print("   (없어도 실행은 가능하지만 OCR 기능을 사용할 수 없습니다)")
         
         print("\n계속 진행하시겠습니까? (y/n)")
