@@ -308,29 +308,23 @@ class MedicineAssistant:
         print("\n📷 카메라를 준비하는 중...")
 
         try:
-            # CAP_DSHOW 백엔드로 카메라 열기
+            # CAP_DSHOW 백엔드로 카메라 열기 (test.py와 동일한 방식)
             cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
-            time.sleep(2)  # 카메라 초기화 대기
+            time.sleep(1)  # test.py와 동일한 대기 시간
 
             if not cap.isOpened():
                 print(f"❌ 카메라 {self.camera_index}번을 열 수 없습니다.")
-                # 다른 카메라 인덱스 시도
-                for i in range(3):
-                    if i != self.camera_index:
-                        print(f"카메라 {i}번으로 재시도...")
-                        cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
-                        time.sleep(1)
-                        if cap.isOpened():
-                            self.camera_index = i
-                            print(f"✅ 카메라 {i}번 연결 성공")
-                            break
-                else:
-                    raise Exception("사용 가능한 카메라를 찾을 수 없습니다.")
+                return False
 
             print(f"✅ 카메라 {self.camera_index}번에 연결되었습니다.")
 
-            # 프레임 촬영
+            # 프레임 촬영 (test.py와 동일한 방식)
             ret, frame = cap.read()
+            
+            # 카메라가 초기화될 시간을 조금 주기 위해 프레임 몇 장 버리기
+            for i in range(5):
+                ret, frame = cap.read()
+
             if ret:
                 cv2.imwrite(self.med_img, frame)
                 print(f"📸 사진이 {self.med_img}로 저장되었습니다.")
