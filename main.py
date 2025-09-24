@@ -662,17 +662,25 @@ def check_requirements():
     """필수 요구사항 확인"""
     print("🔍 시스템 요구사항을 확인하는 중...")
 
+    # medicine_index 존재 여부 확인
+    has_medicine_index = os.path.exists("medicine_index") and os.path.isdir("medicine_index")
+
     requirements = {
         "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY") is not None,
-        "e_data.json": os.path.exists("e_data.json"),
-        "n_data.json": os.path.exists("n_data.json"),
+        "의약품 데이터": has_medicine_index or (os.path.exists("public_data/e_data.json") and os.path.exists("public_data/n_data.json")),
         "카메라": check_camera_availability()
     }
 
     all_ok = True
     for item, status in requirements.items():
         if status:
-            print(f"  ✅ {item}")
+            if item == "의약품 데이터":
+                if has_medicine_index:
+                    print(f"  ✅ {item} (기존 인덱스 사용)")
+                else:
+                    print(f"  ✅ {item} (원본 파일 사용)")
+            else:
+                print(f"  ✅ {item}")
         else:
             print(f"  ❌ {item} - {'설정 필요' if 'API' in item else '사용 불가'}")
             if item != "카메라":
@@ -685,8 +693,10 @@ def check_requirements():
         if not requirements["OPENAI_API_KEY"]:
             print("1. .env 파일에 OPENAI_API_KEY를 설정하세요")
 
-        if not requirements["e_data.json"] or not requirements["n_data.json"]:
-            print("2. 의약품 데이터 파일(e_data.json, n_data.json)을 준비하세요")
+        if not requirements["의약품 데이터"]:
+            print("2. 의약품 데이터를 준비하세요:")
+            print("   - medicine_index/ 폴더 또는")
+            print("   - public_data/e_data.json, public_data/n_data.json 파일")
             print("   (없어도 실행은 가능하지만 RAG 기능이 제한됩니다)")
 
         print("\n계속 진행하시겠습니까? (y/n)")

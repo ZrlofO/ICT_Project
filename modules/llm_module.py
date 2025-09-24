@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class LLMModule:
-    def __init__(self, e_data_path="e_data.json", n_data_path="n_data.json"):
+    def __init__(self, e_data_path="public_data/e_data.json", n_data_path="public_data/n_data.json"):
         """
         LLM RAG 모듈 초기화
         
