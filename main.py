@@ -6,10 +6,11 @@ OCR + RAG + 음성 인터페이스를 통합한 메인 프로그램
 import os
 import time
 import pandas as pd
-from ocr_module import OCRModule
-from voice_module import VoiceModule
-from llm_module import LLMModule
-from store import StoreModule
+import cv2
+from modules.ocr_module import OCRModule
+from modules.voice_module import VoiceModule
+from modules.llm_module import LLMModule
+from modules.store import StoreModule
 
 class MedicineAssistant:
     def __init__(self):
@@ -52,8 +53,14 @@ class MedicineAssistant:
         # 상태 변수
         self.ocr_context = None
         
-        # 의약품 이미지 경로
-        self.med_img = "test/med.jpg"
+        # 의약품 이미지 경로 (카메라로 촬영됨)
+        self.med_img = "scan/capture.jpg"
+
+        # scan 폴더 생성
+        os.makedirs("scan", exist_ok=True)
+
+        # 카메라 설정
+        self.camera_index = 1  # Camo 카메라 번호
         
         # CSV 캐시
         self.csv_cache = {
@@ -81,7 +88,7 @@ class MedicineAssistant:
     
     def load_csv_data(self):
         """CSV 파일을 로드하고 메모리에 저장"""
-        csv_files = ['general.csv', 'given.csv']
+        csv_files = ['user_med_data/general.csv', 'user_med_data/given.csv']
         
         for csv_name in csv_files:
             try:
@@ -296,9 +303,61 @@ class MedicineAssistant:
         print("  Q : 프로그램 종료")
         print("="*60)
     
+    def capture_medicine_image(self):
+        """카메라로 의약품 이미지 촬영"""
+        print("\n📷 카메라를 준비하는 중...")
+
+        try:
+            # CAP_DSHOW 백엔드로 카메라 열기
+            cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
+            time.sleep(2)  # 카메라 초기화 대기
+
+            if not cap.isOpened():
+                print(f"❌ 카메라 {self.camera_index}번을 열 수 없습니다.")
+                # 다른 카메라 인덱스 시도
+                for i in range(3):
+                    if i != self.camera_index:
+                        print(f"카메라 {i}번으로 재시도...")
+                        cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
+                        time.sleep(1)
+                        if cap.isOpened():
+                            self.camera_index = i
+                            print(f"✅ 카메라 {i}번 연결 성공")
+                            break
+                else:
+                    raise Exception("사용 가능한 카메라를 찾을 수 없습니다.")
+
+            print(f"✅ 카메라 {self.camera_index}번에 연결되었습니다.")
+
+            # 프레임 촬영
+            ret, frame = cap.read()
+            if ret:
+                cv2.imwrite(self.med_img, frame)
+                print(f"📸 사진이 {self.med_img}로 저장되었습니다.")
+                success = True
+            else:
+                print("❌ 카메라에서 이미지를 읽을 수 없습니다.")
+                success = False
+
+            # 카메라 리소스 해제
+            cap.release()
+            return success
+
+        except Exception as e:
+            print(f"❌ 카메라 오류: {e}")
+            return False
+
     def handle_medicine_storage(self):
         """약품 저장 처리"""
         print("\n💾 약품 저장 프로세스를 시작합니다...")
+
+        # 카메라로 사진 촬영
+        if not self.capture_medicine_image():
+            fail_msg = "카메라 촬영에 실패했습니다."
+            print(f"\n❌ {fail_msg}")
+            self.voice.speak(fail_msg)
+            return
+
         try:
             result = self.store.start_storage_process(self.med_img)
             if result:
@@ -313,25 +372,25 @@ class MedicineAssistant:
             error_msg = f"저장 중 오류가 발생했습니다: {e}"
             print(f"\n❌ {error_msg}")
             self.voice.speak("저장 중 오류가 발생했습니다.")
-        
+
         time.sleep(1)
     
     def handle_medicine_query(self):
         """약품 질의 처리"""
         # 상자 OCR 안내
-        ocr_prompt = "만약 약품 상자가 있다면 상자를 보여준 뒤 S 버튼을 눌러주세요. 만약 없다면 그냥 S 버튼을 눌러주세요."
+        ocr_prompt = "만약 약품 상자가 있다면 카메라에 상자를 보여준 뒤 S 버튼을 눌러주세요. 만약 없다면 그냥 S 버튼을 눌러주세요."
         print(f"\n🔊 {ocr_prompt}")
         self.voice.speak(ocr_prompt)
-        
+
         # 사용자 입력 대기
         user_input = input("\n📷 준비되면 S를 입력하세요: ").strip().upper()
-        
+
         if user_input == 'S':
-            # OCR 처리 시도
-            if os.path.exists(self.med_img):
-                print(f"\n📸 이미지 파일 발견: {self.med_img}")
+            # 카메라로 사진 촬영
+            if self.capture_medicine_image():
+                print(f"\n📸 이미지 촬영 완료: {self.med_img}")
                 ocr_text, _ = self.ocr.extract_text_with_preprocessing(self.med_img)
-                
+
                 if ocr_text:
                     self.ocr_context = self.ocr.format_for_llm(ocr_text)
                     print("✅ 약품 정보가 추출되었습니다.")
@@ -339,40 +398,40 @@ class MedicineAssistant:
                     print("⚠️ 이미지에서 텍스트를 추출할 수 없었습니다.")
                     self.ocr_context = None
             else:
-                print(f"⚠️ {self.med_img} 파일이 없습니다. OCR을 건너뜁니다.")
+                print("❌ 카메라 촬영에 실패했습니다. OCR을 건너뜁니다.")
                 self.ocr_context = None
-        
+
         # 질문 받기
         question_prompt = "무엇을 물어보시겠습니까?"
         print(f"\n🔊 {question_prompt}")
         self.voice.speak(question_prompt)
-        
+
         # 음성으로 질문 받기 (10초)
         print("\n🎤 음성으로 질문해주세요...")
         user_question = self.voice.listen(duration=10)
-        
+
         if not user_question:
             no_input_msg = "질문을 인식할 수 없었습니다. 다시 시도해주세요."
             print(f"❌ {no_input_msg}")
             self.voice.speak(no_input_msg)
             return
-        
+
         print(f"\n❓ 인식된 질문: {user_question}")
-        
+
         # LLM으로 답변 생성
         print("\n🤔 답변을 생성하는 중...")
         answer = self.llm.query(user_question, self.ocr_context)
-        
+
         # 답변 출력 및 음성 재생
         print("\n" + "="*60)
         print("💊 답변:")
         print("-"*60)
         print(answer)
         print("="*60)
-        
+
         # 음성으로 답변
         self.voice.speak(answer)
-        
+
         # OCR 컨텍스트 초기화
         self.ocr_context = None
     
@@ -602,44 +661,56 @@ class MedicineAssistant:
 def check_requirements():
     """필수 요구사항 확인"""
     print("🔍 시스템 요구사항을 확인하는 중...")
-    
-    med_img = "test/med.jpg"
-    
+
     requirements = {
         "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY") is not None,
         "e_data.json": os.path.exists("e_data.json"),
         "n_data.json": os.path.exists("n_data.json"),
-        med_img: os.path.exists(med_img)
+        "카메라": check_camera_availability()
     }
-    
+
     all_ok = True
     for item, status in requirements.items():
         if status:
             print(f"  ✅ {item}")
         else:
-            print(f"  ❌ {item} - {'설정 필요' if 'API' in item else '파일 없음'}")
-            all_ok = False
-    
+            print(f"  ❌ {item} - {'설정 필요' if 'API' in item else '사용 불가'}")
+            if item != "카메라":
+                all_ok = False
+
     if not all_ok:
         print("\n⚠️ 일부 요구사항이 충족되지 않았습니다.")
         print("다음 사항을 확인해주세요:")
-        
+
         if not requirements["OPENAI_API_KEY"]:
             print("1. .env 파일에 OPENAI_API_KEY를 설정하세요")
-            
+
         if not requirements["e_data.json"] or not requirements["n_data.json"]:
             print("2. 의약품 데이터 파일(e_data.json, n_data.json)을 준비하세요")
             print("   (없어도 실행은 가능하지만 RAG 기능이 제한됩니다)")
-            
-        if not requirements[med_img]:
-            print(f"3. OCR 테스트용 이미지 파일({med_img})을 준비하세요")
-            print("   (없어도 실행은 가능하지만 OCR 기능을 사용할 수 없습니다)")
-        
+
         print("\n계속 진행하시겠습니까? (y/n)")
         if input().strip().lower() != 'y':
             return False
-    
+
+    if not requirements["카메라"]:
+        print("\n⚠️ 카메라를 사용할 수 없지만 시스템은 실행됩니다.")
+        print("   (카메라 기능이 제한되지만 다른 기능은 정상 작동합니다)")
+
     return True
+
+def check_camera_availability():
+    """카메라 사용 가능 여부 확인"""
+    try:
+        # 여러 카메라 인덱스 시도
+        for i in range(3):
+            cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
+            if cap.isOpened():
+                cap.release()
+                return True
+        return False
+    except:
+        return False
 
 def main():
     """메인 함수"""

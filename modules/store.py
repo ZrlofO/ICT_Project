@@ -6,9 +6,9 @@ import os
 import csv
 import time
 from datetime import datetime
-from voice_module import VoiceModule
-from ocr_module import OCRModule
-from llm_module import LLMModule
+from .voice_module import VoiceModule
+from .ocr_module import OCRModule
+from .llm_module import LLMModule
 
 class StoreModule:
     def __init__(self, voice_module=None, ocr_module=None, llm_module=None):
@@ -32,8 +32,11 @@ class StoreModule:
             self.llm = LLMModule()
         
         # CSV 파일 경로
-        self.general_csv = "general.csv"
-        self.given_csv = "given.csv"
+        self.general_csv = "user_med_data/general.csv"
+        self.given_csv = "user_med_data/given.csv"
+
+        # user_med_data 폴더 생성
+        os.makedirs("user_med_data", exist_ok=True)
         
         # CSV 파일 초기화
         self._initialize_csv_files()
@@ -54,59 +57,45 @@ class StoreModule:
                 writer = csv.writer(file)
                 writer.writerow(['제목', 'OCR정보', '저장날짜'])
     
-    def start_storage_process(self, med_img="test/tylenol2.jpg"):
-        """약품 저장 프로세스 시작"""
-        # 1. 음성 안내
-        guide_message = "카메라에 약상자 혹은 약봉투를 보여주신 후 버튼을 눌러주세요."
-        print(f"\n🔊 {guide_message}")
-        self.voice.speak(guide_message)
-        
-        # 사용자 입력 대기
-        user_input = input("\n📷 준비되면 S를 입력하세요: ").strip().upper()
-        
-        if user_input == 'S':
-            return self._process_medicine_image(med_img)
-        else:
-            error_msg = "저장 프로세스가 취소되었습니다."
-            print(f"❌ {error_msg}")
-            self.voice.speak(error_msg)
-            return False
+    def start_storage_process(self, med_img="scan/capture.jpg"):
+        """약품 저장 프로세스 시작 (이미 촬영된 이미지 사용)"""
+        return self._process_medicine_image(med_img)
     
-    def _process_medicine_image(self, med_img="test/tylenol2.jpg"):
+    def _process_medicine_image(self, med_img="scan/capture.jpg"):
         """약품 이미지 처리 및 분류"""
-        # 2. OCR 처리
+        # OCR 처리
         if not os.path.exists(med_img):
             error_msg = "이미지 파일을 찾을 수 없습니다."
             print(f"❌ {error_msg}")
             self.voice.speak(error_msg)
             return False
-        
+
         print(f"\n📸 이미지 분석 중: {med_img}")
         ocr_text, _ = self.ocr.extract_text_with_preprocessing(med_img)
-        
+
         if not ocr_text or not ocr_text.strip():
             error_msg = "인식된 것이 없어 저장할 수 없습니다"
             print(f"❌ {error_msg}")
             self.voice.speak(error_msg)
             return False
-        
+
         print(f"✅ OCR 완료: {ocr_text}")
-        
-        # 3. GPT를 통한 약품 분류
+
+        # GPT를 통한 약품 분류
         classification = self._classify_medicine(ocr_text)
-        
+
         if classification['type'] == '기타':
             retry_msg = "약 상자 또는 약봉투를 뒤집어 다시 진행해주세요."
             print(f"⚠️ {retry_msg}")
             self.voice.speak(retry_msg)
-            return self.start_storage_process(med_img)  # 재시도
-        
-        # 4. 분류에 따른 처리
+            return False  # 더 이상 재시도하지 않음
+
+        # 분류에 따른 처리
         if classification['type'] == '일반의약품':
             return self._handle_general_medicine(classification)
         elif classification['type'] == '처방약':
             return self._handle_prescription_medicine(ocr_text, med_img)
-        
+
         return False
     
     def _classify_medicine(self, ocr_text):
@@ -201,7 +190,7 @@ OCR 텍스트:
             self.voice.speak(error_msg)
             return False
     
-    def _handle_prescription_medicine(self, ocr_text, med_img="test/tylenol2.jpg"):
+    def _handle_prescription_medicine(self, ocr_text, med_img="scan/capture.jpg"):
         """처방약 처리"""
         while True:
             # 1. 이름 입력 요청

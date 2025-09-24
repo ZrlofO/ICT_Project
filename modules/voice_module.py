@@ -27,7 +27,7 @@ class VoiceModule:
         self.CHUNK = 1024
         self.FORMAT = pyaudio.paInt16
         self.CHANNELS = 1
-        self.RATE = 16000
+        self.RATE = 44100
         
         # PyAudio 초기화
         self.audio = pyaudio.PyAudio()

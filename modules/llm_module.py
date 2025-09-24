@@ -376,8 +376,8 @@ class LLMModule:
         user_medicines = []
         
         try:
-            if os.path.exists("given.csv"):
-                with open("given.csv", 'r', encoding='utf-8') as file:
+            if os.path.exists("user_med_data/given.csv"):
+                with open("user_med_data/given.csv", 'r', encoding='utf-8') as file:
                     reader = csv.DictReader(file)
                     for row in reader:
                         if row.get('제목') and row.get('OCR정보'):

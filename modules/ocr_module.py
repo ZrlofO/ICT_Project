@@ -221,8 +221,8 @@ def test_ocr():
     try:
         ocr = OCRModule()
         
-        # 테스트 이미지 경로
-        test_image = "test/aronamin.jpg"
+        # 테스트 이미지 경로 (카메라로 촬영된 이미지)
+        test_image = "scan/capture.jpg"
         
         if os.path.exists(test_image):
             print(f"\n테스트 이미지: {test_image}")
